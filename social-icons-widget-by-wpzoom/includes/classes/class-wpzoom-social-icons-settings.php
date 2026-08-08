@@ -31,17 +31,24 @@ class WPZOOM_Social_Icons_Settings {
 	/**
 	 * Settings options defaults
 	 *
+	 * Note: despite the "disable-" prefix, a TRUE value means the icon set
+	 * IS loaded. Only Socicons (the native set) is enabled by default —
+	 * every extra set costs a render-blocking stylesheet plus a preloaded
+	 * font file on each page. Sites that already used the plugin before
+	 * this change are migrated once to all-enabled on upgrade
+	 * (see zoom_social_icons_migrate_kit_defaults()).
+	 *
 	 * @var array
 	 */
 	public static $option_defaults = array(
 		'disable-widget'                         => false,
 		'disable-block'                          => false,
 		'disable-fonts-preloading'               => true,
-		'disable-css-loading-for-academicons'    => true,
-		'disable-css-loading-for-font-awesome-3' => true,
-		'disable-css-loading-for-font-awesome-5' => true,
-		'disable-css-loading-for-genericons'     => true,
-		'disable-css-loading-for-dashicons'      => true,
+		'disable-css-loading-for-academicons'    => false,
+		'disable-css-loading-for-font-awesome-3' => false,
+		'disable-css-loading-for-font-awesome-5' => false,
+		'disable-css-loading-for-genericons'     => false,
+		'disable-css-loading-for-dashicons'      => false,
 		'disable-css-loading-for-socicons'       => true,
 		'categories-sync'                        => true,
 		'custom-icon-set'                        => array(),
@@ -95,6 +102,13 @@ class WPZOOM_Social_Icons_Settings {
 				WPZOOM_SOCIAL_ICONS_PLUGIN_URL . 'assets/css/social-icons-settings-page.css',
 				array(),
 				filemtime( WPZOOM_SOCIAL_ICONS_PLUGIN_PATH . 'assets/css/social-icons-settings-page.css' )
+			);
+
+			wp_enqueue_style(
+				'wpzoom-admin-upsell',
+				WPZOOM_SOCIAL_ICONS_PLUGIN_URL . 'assets/css/admin-upsell.css',
+				array(),
+				WPZOOM_SOCIAL_ICONS_PLUGIN_VERSION
 			);
 
 			wp_enqueue_script(
@@ -177,7 +191,9 @@ class WPZOOM_Social_Icons_Settings {
 				<li>
 					<a href="#general-tab"><?php esc_html_e( 'Misc.', 'social-icons-widget-by-wpzoom' ); ?></a>
 				</li>
-
+				<li>
+					<a href="#upload-pro"><?php esc_html_e( 'Upload Icons', 'social-icons-widget-by-wpzoom' ); ?> <span class="wpzoom-pro-badge"><?php esc_html_e( 'Pro', 'social-icons-widget-by-wpzoom' ); ?></span></a>
+				</li>
 			</ul>
 		</div>
 
@@ -205,10 +221,7 @@ class WPZOOM_Social_Icons_Settings {
 			</div>
 
 			<div id="upload-pro" class="tab">
-				<?php
-						settings_fields( 'wpzoom-social-icons-widget-settings-upload-pro' );
-						do_settings_sections( 'wpzoom-social-icons-widget-settings-upload-pro' );
-				?>
+				<?php $this->render_upload_pro_upsell(); ?>
 			</div>
 
 			<?php submit_button(); ?>
@@ -580,6 +593,71 @@ class WPZOOM_Social_Icons_Settings {
         		<?php esc_html_e( 'Enable sync', 'social-icons-widget-by-wpzoom' ); ?>
         </label>
         <span class="description"><?php esc_html_e( 'Sync Icon sets with Block and Widget Settings from popup.', 'social-icons-widget-by-wpzoom' ); ?></span>
+		<?php
+	}
+
+	/**
+	 * Render the Upload Icons Pro upsell preview
+	 *
+	 * @return void
+	 */
+	public function render_upload_pro_upsell() {
+		$upgrade_url = 'https://www.wpzoom.com/plugins/social-share/?utm_source=wpadmin&utm_medium=plugin&utm_campaign=social-icons-free&utm_content=settings-upload';
+		?>
+		<div class="wpzoom-upload-pro-preview">
+			<!-- Blurred Preview -->
+			<div class="wpzoom-upload-preview-blurred">
+				<div class="wpzoom-upload-area-preview">
+					<span class="dashicons dashicons-upload"></span>
+					<p><?php esc_html_e( 'Click to upload or drag & drop SVG icons here', 'social-icons-widget-by-wpzoom' ); ?></p>
+				</div>
+
+				<h3><?php esc_html_e( 'Your Custom Icons', 'social-icons-widget-by-wpzoom' ); ?></h3>
+				<div class="wpzoom-icons-grid-preview">
+					<div class="wpzoom-icon-preview-item">
+						<span class="dashicons dashicons-share"></span>
+						<span>custom-1</span>
+					</div>
+					<div class="wpzoom-icon-preview-item">
+						<span class="dashicons dashicons-heart"></span>
+						<span>custom-2</span>
+					</div>
+					<div class="wpzoom-icon-preview-item">
+						<span class="dashicons dashicons-star-filled"></span>
+						<span>custom-3</span>
+					</div>
+					<div class="wpzoom-icon-preview-item">
+						<span class="dashicons dashicons-admin-site"></span>
+						<span>custom-4</span>
+					</div>
+					<div class="wpzoom-icon-preview-item">
+						<span class="dashicons dashicons-format-image"></span>
+						<span>custom-5</span>
+					</div>
+					<div class="wpzoom-icon-preview-item">
+						<span class="dashicons dashicons-megaphone"></span>
+						<span>custom-6</span>
+					</div>
+				</div>
+			</div>
+
+			<!-- Pro Overlay -->
+			<div class="wpzoom-pro-overlay">
+				<div class="wpzoom-pro-overlay-content">
+					<span class="wpzoom-pro-badge-large"><?php esc_html_e( 'Pro Feature', 'social-icons-widget-by-wpzoom' ); ?></span>
+					<h2><?php esc_html_e( 'Custom Icon Uploads', 'social-icons-widget-by-wpzoom' ); ?></h2>
+					<p><?php esc_html_e( 'Upload your own SVG icons to create a unique social icons set that matches your brand.', 'social-icons-widget-by-wpzoom' ); ?></p>
+					<ul class="wpzoom-pro-features-list">
+						<li><span class="dashicons dashicons-yes"></span> <?php esc_html_e( 'Upload unlimited custom SVG icons', 'social-icons-widget-by-wpzoom' ); ?></li>
+						<li><span class="dashicons dashicons-yes"></span> <?php esc_html_e( 'Use in widgets, blocks & shortcodes', 'social-icons-widget-by-wpzoom' ); ?></li>
+						<li><span class="dashicons dashicons-yes"></span> <?php esc_html_e( 'Organize icons in your custom set', 'social-icons-widget-by-wpzoom' ); ?></li>
+					</ul>
+					<a href="<?php echo esc_url( $upgrade_url ); ?>" class="button button-primary button-hero" target="_blank">
+						<?php esc_html_e( 'Upgrade to Pro', 'social-icons-widget-by-wpzoom' ); ?>
+					</a>
+				</div>
+			</div>
+		</div>
 		<?php
 	}
 

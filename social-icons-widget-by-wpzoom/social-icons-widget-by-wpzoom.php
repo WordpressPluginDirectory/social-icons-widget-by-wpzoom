@@ -1,16 +1,16 @@
 <?php
 /**
- * Plugin Name:         Social Icons & Sharing Buttons by WPZOOM
- * Plugin URI:          https://www.wpzoom.com/plugins/social-widget/
- * Description:         Add Social Icons and Share Buttons to your website easily. Link to your social media profiles or let visitors share your content on popular networks. Supports over 400 social media icons, customizable colors, and drag-and-drop sorting.
- * Version:             4.5.4
+ * Plugin Name:         Social Icons, Share Buttons & Click to Chat by WPZOOM
+ * Plugin URI:          https://www.wpzoom.com/plugins/social-share/
+ * Description:         Add social icons, share buttons, and a floating Click to Chat button to your website. Link to your social profiles, let visitors share your content, and connect instantly via WhatsApp, Telegram, Messenger, and Viber. Supports 400+ icons, customizable colors, and drag-and-drop sorting.
+ * Version:             4.6.1
  * Author:              WPZOOM
  * Author URI:          https://www.wpzoom.com/
  * Text Domain:         social-icons-widget-by-wpzoom
  * License:             GNU General Public License v2.0 or later
  * License URI:         http://www.gnu.org/licenses/gpl-2.0.txt
- * Requires at least:   6.0
- * Tested up to:        6.9
+ * Requires at least:   6.5
+ * Tested up to:        7.1
  *
  * @package WPZOOM_Social_Icons
  */
@@ -43,6 +43,71 @@ if ( empty( $wpzoom_social_icons_settings['disable-block'] ) ) {
 
 require_once plugin_dir_path( __FILE__ ) . 'includes/classes/class-zoom-social-icons-widget.php';
 require_once plugin_dir_path( __FILE__ ) . 'includes/classes/class-wpzoom-social-icons-shortcode.php';
+require_once plugin_dir_path( __FILE__ ) . 'includes/classes/class-wpzoom-share-analytics-upsell.php';
+require_once plugin_dir_path( __FILE__ ) . 'includes/classes/class-wpzoom-floating-buttons-upsell.php';
+require_once plugin_dir_path( __FILE__ ) . 'includes/classes/class-wpzoom-click-to-chat.php';
+
+// WPZOOM Notice Center (submodule at includes/notice-center).
+$wpz_notice_center_path = WPZOOM_SOCIAL_ICONS_PLUGIN_PATH . 'includes/notice-center/';
+$wpz_notice_center_url  = WPZOOM_SOCIAL_ICONS_PLUGIN_URL . 'includes/notice-center/';
+if ( is_admin() && ! class_exists( 'WPZOOM_Notice_Center' ) && file_exists( $wpz_notice_center_path . 'notice-center.php' ) ) {
+	require_once $wpz_notice_center_path . 'notice-center.php';
+	WPZOOM_Notice_Center::get_instance()->set_assets( array(
+		'css_url' => $wpz_notice_center_url . 'assets/notice-center.css',
+		'js_url'  => $wpz_notice_center_url . 'assets/notice-center.js',
+	) );
+}
+
+require_once plugin_dir_path( __FILE__ ) . 'includes/classes/class-wpzoom-sharing-buttons-notice.php';
+require_once plugin_dir_path( __FILE__ ) . 'includes/classes/class-wpzoom-click-to-chat-notice.php';
+require_once plugin_dir_path( __FILE__ ) . 'includes/classes/class-wpzoom-social-icons-upsell.php';
+
+/**
+ * One-time migration for the icon-set defaults change (only Socicons is
+ * enabled out of the box now). Sites that were already using the plugin
+ * without ever saving the settings page used to get every icon set loaded —
+ * persist that legacy behavior for them so no icons break, and let only
+ * fresh installs pick up the slim defaults.
+ *
+ * @return void
+ */
+function zoom_social_icons_migrate_kit_defaults() {
+	if ( get_option( 'wpzoom_social_icons_kit_defaults_migrated' ) ) {
+		return;
+	}
+
+	// Sites that saved the settings page keep their saved values — nothing to do.
+	if ( false === get_option( WPZOOM_Social_Icons_Settings::$option_name ) ) {
+		$widget_instances = get_option( 'widget_zoom-social-icons-widget' );
+		$in_use           = is_array( $widget_instances ) && count( array_filter( array_keys( $widget_instances ), 'is_numeric' ) ) > 0;
+
+		if ( ! $in_use ) {
+			$block_widgets = wp_json_encode( get_option( 'widget_block', array() ) );
+			$in_use        = false !== strpos( (string) $block_widgets, 'wpzoom-blocks/social-icons' );
+		}
+
+		if ( ! $in_use ) {
+			global $wpdb;
+			$in_use = (bool) $wpdb->get_var(
+				"SELECT ID FROM {$wpdb->posts}
+				 WHERE post_status NOT IN ( 'trash', 'auto-draft' )
+				 AND ( post_content LIKE '%wpzoom-blocks/social-icons%' OR post_content LIKE '%[zoom_social_icons%' )
+				 LIMIT 1"
+			);
+		}
+
+		if ( $in_use ) {
+			$legacy_settings = WPZOOM_Social_Icons_Settings::$option_defaults;
+			foreach ( array( 'academicons', 'font-awesome-3', 'font-awesome-5', 'genericons', 'dashicons', 'socicons' ) as $kit ) {
+				$legacy_settings[ 'disable-css-loading-for-' . $kit ] = true;
+			}
+			update_option( WPZOOM_Social_Icons_Settings::$option_name, $legacy_settings );
+		}
+	}
+
+	update_option( 'wpzoom_social_icons_kit_defaults_migrated', 1 );
+}
+add_action( 'plugins_loaded', 'zoom_social_icons_migrate_kit_defaults' );
 
 $current_theme = get_template();
 if( 'inspiro' !== $current_theme  ) {
@@ -63,67 +128,56 @@ if ( empty( $wpzoom_social_icons_settings['disable-widget'] ) ) {
 }
 
 /**
- * Load icon fonts libraries
+ * Preload icon font files by printing <link rel="preload"> tags directly.
+ *
+ * Previously this used wp_enqueue_style() with font files and then modified
+ * the link tags via style_loader_tag filter. That approach caused CSS minifier
+ * plugins (e.g. SG Optimizer) to crash when trying to minify .woff/.woff2 files.
  *
  * @return void
  */
 function zoom_social_icons_enqueue_fonts() {
-	// phpcs:disable WordPress.WP.EnqueuedResourceParameters.MissingVersion
+	$fonts = array();
+
 	if ( wp_style_is( 'wpzoom-social-icons-academicons' ) ) {
-		wp_enqueue_style( 'wpzoom-social-icons-font-academicons-woff2', WPZOOM_SOCIAL_ICONS_PLUGIN_URL . 'assets/font/academicons.woff2?v=1.9.2', array(), null );
+		$fonts[] = WPZOOM_SOCIAL_ICONS_PLUGIN_URL . 'assets/font/academicons.woff2?v=1.9.2';
 	}
 
 	if ( wp_style_is( 'wpzoom-social-icons-font-awesome-3' ) ) {
-		wp_enqueue_style( 'wpzoom-social-icons-font-fontawesome-3-woff2', WPZOOM_SOCIAL_ICONS_PLUGIN_URL . 'assets/font/fontawesome-webfont.woff2?v=4.7.0', array(), null );
+		$fonts[] = WPZOOM_SOCIAL_ICONS_PLUGIN_URL . 'assets/font/fontawesome-webfont.woff2?v=4.7.0';
 	}
 
 	if ( wp_style_is( 'wpzoom-social-icons-font-awesome-5' ) ) {
-		wp_enqueue_style( 'wpzoom-social-icons-font-fontawesome-5-brands-woff2', WPZOOM_SOCIAL_ICONS_PLUGIN_URL . 'assets/font/fa-brands-400.woff2', array(), null );
-
-		wp_enqueue_style( 'wpzoom-social-icons-font-fontawesome-5-regular-woff2', WPZOOM_SOCIAL_ICONS_PLUGIN_URL . 'assets/font/fa-regular-400.woff2', array(), null );
-
-		wp_enqueue_style( 'wpzoom-social-icons-font-fontawesome-5-solid-woff2', WPZOOM_SOCIAL_ICONS_PLUGIN_URL . 'assets/font/fa-solid-900.woff2', array(), null );
+		$fonts[] = WPZOOM_SOCIAL_ICONS_PLUGIN_URL . 'assets/font/fa-brands-400.woff2';
+		$fonts[] = WPZOOM_SOCIAL_ICONS_PLUGIN_URL . 'assets/font/fa-regular-400.woff2';
+		$fonts[] = WPZOOM_SOCIAL_ICONS_PLUGIN_URL . 'assets/font/fa-solid-900.woff2';
 	}
 
 	if ( wp_style_is( 'wpzoom-social-icons-genericons' ) ) {
-		wp_enqueue_style( 'wpzoom-social-icons-font-genericons-woff', WPZOOM_SOCIAL_ICONS_PLUGIN_URL . 'assets/font/Genericons.woff', array(), null );
+		$fonts[] = WPZOOM_SOCIAL_ICONS_PLUGIN_URL . 'assets/font/Genericons.woff';
 	}
 
 	if ( wp_style_is( 'wpzoom-social-icons-socicon' ) ) {
-		wp_enqueue_style( 'wpzoom-social-icons-font-socicon-woff2', WPZOOM_SOCIAL_ICONS_PLUGIN_URL . 'assets/font/socicon.woff2?v=' . WPZOOM_SOCIAL_ICONS_PLUGIN_VERSION, array(), null );
-	}
-}
-
-/**
- * Add preload to rel attribute
- *
- * @param string $tag The link tag for the enqueued style.
- * @param string $handle The style's registered handle.
- * @param string $href The stylesheet's source URL.
- *
- * @return string $tag The HTML link tag of an enqueued style.
- */
-function zoom_social_icons_add_preload_to_rel_attribute( $tag, $handle, $href ) {
-	$style_handlers = apply_filters(
-		'wpzoom-social-icons-fonts-preload-filter',
-		array(
-			'wpzoom-social-icons-font-academicons-woff2',
-			'wpzoom-social-icons-font-fontawesome-3-woff2',
-			'wpzoom-social-icons-font-genericons-woff',
-			'wpzoom-social-icons-font-socicon-woff2',
-			'wpzoom-social-icons-font-fontawesome-5-brands-woff2',
-			'wpzoom-social-icons-font-fontawesome-5-regular-woff2',
-			'wpzoom-social-icons-font-fontawesome-5-solid-woff2',
-		)
-	);
-
-	if ( in_array( $handle, $style_handlers ) ) {
-		$file_type = strtolower( pathinfo( basename( parse_url( $href, PHP_URL_PATH ) ), PATHINFO_EXTENSION ) );
-		$file_type = ! empty( $file_type ) ? ( "type='font/{$file_type}'" ) : '';
-		$tag       = preg_replace( array( "/='stylesheet'/", "/media='all'/", "/type=['\"]text\/(css)['\"]/" ), array( "='preload' as='font' ", $file_type . ' crossorigin', '' ), $tag );
+		$fonts[] = WPZOOM_SOCIAL_ICONS_PLUGIN_URL . 'assets/font/socicon.woff2?v=' . WPZOOM_SOCIAL_ICONS_PLUGIN_VERSION;
 	}
 
-	return $tag;
+	/**
+	 * Filter the list of font URLs to preload.
+	 *
+	 * @param string[] $fonts Array of font file URLs to preload.
+	 */
+	$fonts = apply_filters( 'wpzoom-social-icons-fonts-preload-filter', $fonts );
+
+	foreach ( $fonts as $font_url ) {
+		$ext  = strtolower( pathinfo( wp_parse_url( $font_url, PHP_URL_PATH ), PATHINFO_EXTENSION ) );
+		$type = ! empty( $ext ) ? "type='font/{$ext}'" : '';
+
+		printf(
+			"<link rel='preload' as='font' href='%s' %s crossorigin />\n",
+			esc_url( $font_url ),
+			$type
+		);
+	}
 }
 
 /**
@@ -221,8 +275,7 @@ add_action( 'init', 'zoom_social_icons_widget_load_textdomain' );
 function zoom_enqueue_preloaded_fonts() {
 	$fonts_preloading = WPZOOM_Social_Icons_Settings::get_option_key( 'disable-fonts-preloading' );
 	if ( ! empty( $fonts_preloading ) ) {
-		add_action( 'wp_enqueue_scripts', 'zoom_social_icons_enqueue_fonts', 999 );
-		add_filter( 'style_loader_tag', 'zoom_social_icons_add_preload_to_rel_attribute', 10, 3 );
+		add_action( 'wp_head', 'zoom_social_icons_enqueue_fonts', 3 );
 	}
 }
 add_action( 'init', 'zoom_enqueue_preloaded_fonts' );
@@ -249,7 +302,14 @@ if ( ! function_exists( 'wpzoom_social_icons_plugin_action_links' ) ) {
 
 			array_unshift( $links, $settings_link );
 
-			// $links['go_pro'] = sprintf( '<a href="%1$s" target="_blank" class="wpzoom-social-icons-gopro" style="font-weight: bold;">%2$s</a>', 'https://www.wpzoom.com/plugins/social-widget/?utm_source=plugins-admin-page&utm_medium=plugins-row-action-links&utm_campaign=go_pro', esc_html__( 'Go Pro', 'social-icons-widget-by-wpzoom' ) );
+			// Add Go Pro link if the Pro plugin is not active.
+			if ( ! function_exists( 'wpzoom_social_icons_pro' ) ) {
+				$links['go_pro'] = sprintf(
+					'<a href="%1$s" target="_blank" class="wpzoom-social-icons-gopro" style="color:#2271b1;font-weight:bold;">UPGRADE &rarr; <span class="wpzoom-premium-badge" style="background-color: #2271b1; color: #fff; margin-left: 5px; font-size: 11px; min-height: 16px; border-radius: 8px; display: inline-block; font-weight: 600; line-height: 1.6; padding: 0 8px;">%2$s</span></a>',
+					'https://www.wpzoom.com/plugins/social-share/?utm_source=wpadmin&utm_medium=plugin&utm_campaign=social-icons-free&utm_content=plugins-page',
+					esc_html__( 'PRO', 'social-icons-widget-by-wpzoom' )
+				);
+			}
 		}
 
 		return $links;
@@ -321,7 +381,7 @@ if ( ! function_exists( 'wpzoom_social_icons_upgrade_pro_notice' ) ) {
 					?>
 					</p>
 					<p class="wpz-social-icons-notice-actions">
-						<a class="button-primary" href="https://www.wpzoom.com/plugins/social-widget/?utm_source=admin-notices&utm_medium=admin-notice-actions&utm_campaign=go_pro" target="_blank"><strong><?php esc_html_e( 'Get Social Icons Widget PRO &rarr;', 'social-icons-widget-by-wpzoom' ); ?></strong></a>
+						<a class="button-primary" href="https://www.wpzoom.com/plugins/social-share/?utm_source=admin-notices&utm_medium=admin-notice-actions&utm_campaign=go_pro" target="_blank"><strong><?php esc_html_e( 'Get Social Icons Widget PRO &rarr;', 'social-icons-widget-by-wpzoom' ); ?></strong></a>
 						<?php
 						// phpcs:disable
 						/*
